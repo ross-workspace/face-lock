@@ -1,0 +1,42 @@
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+.AppleDouble/
+
+# Private application data: never publish vaults, profiles or recovery keys
+.face-lock-vault/
+.face-lock-*/
+*.facevault
+*.enc
+*[Rr]ecovery*.txt
+*[Rr]ecovery*.json
+profile.json
+settings.json
+.env
+*.key
+*.pem
+*.p12
+.env.*
+private/
+data/
+vaults/
+VAULT_FOLDER/
+
+# Downloaded model weights, generated local builds and working files
+models/*.onnx
+models/*.task
+work/
+build/
+dist/
+outputs/
+*.app/
+*.zip
+*.log
