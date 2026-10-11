@@ -12,3 +12,9 @@ MediaPipe's source license is [published upstream](https://github.com/google-ai-
 Python package names and versions are recorded in `requirements.txt`, `requirements-dev.txt`, and `requirements-lock.txt`. Those packages retain their own licensing terms. This source repository does not include a prebuilt application or vendored dependency code.
 
 The README's camera illustration depicts a fictional adult and is identified as a synthetic example. It is not a live-camera recognition result. Actual UI screenshots use demonstration data.
+
+## Platform packaging
+
+macOS-only PyObjC requirements use environment markers. Windows uses native user-scoped DPAPI for stored keys and does not install PyObjC. The pinned MediaPipe 1.1.0 [PyPI metadata](https://pypi.org/pypi/mediapipe/1.1.0/json) includes a `win_amd64` wheel. Availability of a wheel does not establish successful application packaging; run the native build checks before distributing an artifact.
+
+The MediaPipe package also publishes a privacy notice covering on-device inputs and performance/utilization metrics sent to Google. Review it before making runtime privacy claims.
