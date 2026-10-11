@@ -23,7 +23,9 @@ def example(tmp_path):
     root = tmp_path / "source"
     root.mkdir()
     (root / "nested").mkdir()
-    (root / "nested" / "Příliš žluťoučký.txt").write_text("Private sample text 🦊")
+    (root / "nested" / "Příliš žluťoučký.txt").write_text(
+        "Private sample text 🦊", encoding="utf-8"
+    )
     (root / "binary.bin").write_bytes(os.urandom(8192))
     (root / "empty").write_bytes(b"")
     destination = tmp_path / "demo.facevault"
@@ -52,7 +54,8 @@ def test_round_trip_recovery_and_lock(example, tmp_path):
             hashlib.sha256(output.read_bytes()).digest()
             == hashlib.sha256((root / entry["name"]).read_bytes()).digest()
         )
-        assert output.stat().st_mode & 0o777 == 0o600
+        if os.name != "nt":
+            assert output.stat().st_mode & 0o777 == 0o600
     session.close()
     with pytest.raises(VaultError, match="locked"):
         session.export(0, tmp_path / "after-lock")
@@ -142,13 +145,25 @@ def test_reject_authenticated_traversal_manifest(example):
         VaultSession(path, key)
 
 
-def test_symlink_and_inside_source_rejected(tmp_path):
+def test_inside_source_rejected(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     (source / "a").write_bytes(b"a")
     with pytest.raises(VaultError, match="outside"):
         create_vault(source, source / "inside.facevault")
-    (source / "link").symlink_to(source / "a")
+    assert not (source / "inside.facevault").exists()
+
+
+def test_symlink_source_rejected(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "a").write_bytes(b"a")
+    try:
+        (source / "link").symlink_to(source / "a")
+    except OSError as error:
+        if os.name == "nt" and error.winerror == 1314:
+            pytest.skip("Windows symlink privilege or Developer Mode is unavailable")
+        raise
     with pytest.raises(VaultError, match="symlink"):
         create_vault(source, tmp_path / "bad.facevault")
     assert not (tmp_path / "bad.facevault").exists()

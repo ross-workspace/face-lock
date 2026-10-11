@@ -16,6 +16,7 @@ htmlcov/
 .face-lock-*/
 *.facevault
 *.enc
+*.dpapi
 *[Rr]ecovery*.txt
 *[Rr]ecovery*.json
 profile.json

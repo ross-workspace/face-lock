@@ -7,7 +7,15 @@ import shutil
 import tempfile
 import uuid
 
-from .vault import VaultError, VaultSession, atomic_write, create_vault, verify_source, vault_id
+from .vault import (
+    VaultError,
+    VaultSession,
+    atomic_write,
+    create_vault,
+    verify_source,
+    vault_id,
+    is_linked,
+)
 
 BACKING = ".face-lock-vault"
 
@@ -28,7 +36,7 @@ def archive_path(folder):
 def folder_state(folder):
     folder = Path(folder)
     backing = folder / BACKING
-    if folder.is_symlink() or backing.is_symlink() or archive_path(folder).is_symlink():
+    if is_linked(folder) or is_linked(backing) or is_linked(archive_path(folder)):
         raise VaultError("Encrypted folder metadata must not be symlinked.")
     state_file = backing / "state.json"
     if state_file.stat().st_size > 4096:
@@ -50,7 +58,7 @@ def write_state(folder, state):
 
 def prepare(folder, progress=lambda message: None, key=None):
     folder = Path(folder)
-    if folder.is_symlink():
+    if is_linked(folder):
         raise VaultError("Choose an ordinary folder.")
     folder = folder.resolve(strict=True)
     if folder == Path.home() or folder == Path(folder.anchor):
@@ -105,6 +113,8 @@ def commit(prepared, progress=lambda message: None):
         os.rename(folder, backup)
         try:
             verify_source(backup, session, progress, excluded=prepared["excluded"])
+            # Windows cannot rename directories holding open archive handles.
+            session.close()
             os.rename(staged, folder)
             committed = True
         except Exception:
@@ -143,6 +153,7 @@ def unlock(folder, key, progress=lambda message: None):
             "Unexpected files in locked folder. Move those extra files elsewhere before unlocking."
         )
     session = VaultSession(archive_path(folder), key)
+    count = len(session.files)
     staged = Path(tempfile.mkdtemp(prefix=".face-lock-decrypt-", dir=folder.parent))
     backup = folder.parent / (".face-lock-ciphertext-" + uuid.uuid4().hex)
     moved = False
@@ -164,6 +175,7 @@ def unlock(folder, key, progress=lambda message: None):
             shutil.copyfileobj(source, destination)
         os.chmod(archive_path(staged), 0o600)
         write_state(staged, "unlocked")
+        session.close()
         os.rename(folder, backup)
         try:
             os.rename(staged, folder)
@@ -175,7 +187,7 @@ def unlock(folder, key, progress=lambda message: None):
             shutil.rmtree(backup)
         except OSError:
             progress(f"Files restored. An encrypted backup remains at {backup}.")
-        return len(session.files)
+        return count
     finally:
         session.close()
         if not moved and staged.exists():

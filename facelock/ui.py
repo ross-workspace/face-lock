@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import time
+import sys
 
 from PySide6.QtCore import QEvent, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -264,6 +265,9 @@ class Window(QMainWindow):
         self.unlock_button.setEnabled(not self.busy and not unlocked and self.vault is not None)
         self.recovery_button.setEnabled(not self.busy and not unlocked and self.vault is not None)
         self.lock_button.setEnabled(not self.busy and (unlocked or readable))
+        self.open_folder_button.setText(
+            "Open in Explorer" if sys.platform == "win32" else "Open in Finder"
+        )
         self.open_folder_button.setVisible(self.folder is not None)
         self.open_folder_button.setEnabled(not self.busy and readable)
         self.remove_originals_button.setEnabled(not self.busy and unlocked)
@@ -626,7 +630,7 @@ class Window(QMainWindow):
                         self.error(count.warning)
                     if key_error:
                         self.error(
-                            "Folder encrypted. Keychain storage failed, so use the recovery key. "
+                            "Folder encrypted. Protected key storage failed, so use the recovery key. "
                             + key_error
                         )
 
@@ -644,7 +648,7 @@ class Window(QMainWindow):
             f"All {count} files were encrypted and verified. Replace this folder's readable contents with the encrypted data?\n\n{source}"
         )
         dialog.setInformativeText(
-            "The folder keeps its original path. Unlock restores the files there. Your saved recovery key can restore them if face unlock fails. Only file contents and folder structure are preserved; permissions, timestamps, extended attributes and ACLs are not preserved. Resource forks are rejected. Existing SSD remnants and sync history cannot be securely erased."
+            "The folder keeps its original path. Unlock restores the files there. Your saved recovery key can restore them if face unlock fails. Only file contents and folder structure are preserved; permissions, timestamps, extended attributes and ACLs are not preserved. Resource forks and Windows alternate data streams are rejected. Existing SSD remnants and sync history cannot be securely erased."
         )
         remove = dialog.addButton("Encrypt original folder", QMessageBox.ButtonRole.DestructiveRole)
         keep = dialog.addButton("Cancel — keep originals", QMessageBox.ButtonRole.RejectRole)
@@ -752,7 +756,7 @@ class Window(QMainWindow):
             identifier = vault_id(self.vault)
             key = self.keychain.get("vault:" + identifier)
             if key is None:
-                raise ValueError("No key for this vault on this Mac. Use your recovery key.")
+                raise ValueError("No key for this vault on this computer. Use your recovery key.")
             self.open_session(key)
         except Exception as error:
             self.error(str(error))

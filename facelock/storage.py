@@ -1,6 +1,7 @@
-"""Secrets use native Keychain APIs, never command arguments or plaintext config."""
+"""Secrets use platform protection, never command arguments or plaintext config."""
 
 import json
+import os
 from pathlib import Path
 import secrets
 import sys
@@ -12,12 +13,18 @@ SERVICE = "local.face-lock.prototype"
 
 
 def data_dir():
-    path = Path.home() / "Library" / "Application Support" / "Face Lock"
+    if sys.platform == "darwin":
+        path = Path.home() / "Library" / "Application Support" / "Face Lock"
+    elif sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        path = (Path(local) if local else Path.home() / "AppData" / "Local") / "Face Lock"
+    else:
+        raise VaultError("Face Lock supports macOS and Windows only.")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
 
 
-class Keychain:
+class MacKeychain:
     def __init__(self):
         import Security
 
@@ -56,6 +63,30 @@ class Keychain:
         status = self.api.SecItemDelete(self.query(account))
         if status not in (0, self.api.errSecItemNotFound):
             raise VaultError(f"Could not remove Keychain item ({status}).")
+
+
+class Keychain:
+    """Keep one API while using Keychain on macOS and user-scoped DPAPI on Windows."""
+
+    def __init__(self, directory=None, protector=None):
+        if sys.platform == "darwin":
+            self.backend = MacKeychain()
+        elif sys.platform == "win32":
+            from .windows_secrets import ProtectedKeyStore
+
+            root = Path(directory) if directory is not None else data_dir() / "keys"
+            self.backend = ProtectedKeyStore(root, protector=protector)
+        else:
+            raise VaultError("Native secret storage is unavailable on this platform.")
+
+    def get(self, account):
+        return self.backend.get(account)
+
+    def put(self, account, value):
+        return self.backend.put(account, value)
+
+    def delete(self, account):
+        return self.backend.delete(account)
 
 
 class ProfileStore:

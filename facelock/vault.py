@@ -36,6 +36,17 @@ def safe_name(value):
         raise VaultError("Unsafe filename in vault.")
     if "\\" in value or ":" in value or "\x00" in value:
         raise VaultError("Unsafe filename in vault.")
+    reserved = (
+        {"CON", "PRN", "AUX", "NUL"}
+        | {f"COM{i}" for i in range(1, 10)}
+        | {f"LPT{i}" for i in range(1, 10)}
+        | {f"{base}{number}" for base in ("COM", "LPT") for number in ("¹", "²", "³")}
+    )
+    for component in value.split("/"):
+        if component.endswith((" ", ".")) or component.split(".")[0].upper() in reserved:
+            raise VaultError("Filename is not portable to Windows.")
+        if any(ord(char) < 32 or char in '<>"|?*' for char in component):
+            raise VaultError("Filename is not portable to Windows.")
     return value
 
 
@@ -57,6 +68,41 @@ def decrypt(key, data, context):
         raise VaultError("Wrong recovery key or damaged vault.") from error
 
 
+def publish_new_file(temporary, destination):
+    """Never replace an existing file; Windows rename supports non-NTFS disks."""
+    if sys.platform == "win32":
+        os.rename(temporary, destination)
+    else:
+        os.link(temporary, destination)
+
+
+def is_linked(path):
+    path = Path(path)
+    return path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
+
+
+def check_supported_metadata(path):
+    if has_resource_fork(path):
+        raise VaultError(
+            "Files with macOS resource forks are unsupported. Originals were not changed."
+        )
+    if sys.platform == "win32":
+        from .windows_files import has_alternate_streams
+
+        if has_alternate_streams(path):
+            raise VaultError(
+                "Windows alternate data streams are unsupported. Originals were not changed."
+            )
+
+
+def open_regular_file(path):
+    """Reject symbolic links and Windows junctions before opening an ordinary file."""
+    path = Path(path)
+    if is_linked(path):
+        raise VaultError("Linked files are unsupported.")
+    return os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+
+
 def atomic_write(path, data, *, replace=False):
     path = Path(path)
     fd, name = tempfile.mkstemp(prefix=".face-lock-", dir=path.parent)
@@ -68,7 +114,7 @@ def atomic_write(path, data, *, replace=False):
         if replace:
             os.replace(name, path)
         else:
-            os.link(name, path)  # Atomic, never overwrites an existing file.
+            publish_new_file(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -101,11 +147,12 @@ def has_resource_fork(path):
 
 def scan_source(root, excluded=(), allow_empty=False):
     supplied = Path(root)
-    if supplied.is_symlink():
+    if is_linked(supplied):
         raise VaultError("Choose an ordinary folder, not a symlink.")
     root = supplied.resolve(strict=True)
     if not root.is_dir():
         raise VaultError("Choose a folder.")
+    check_supported_metadata(root)
     files, total = [], 0
 
     def walk_error(error):
@@ -115,17 +162,16 @@ def scan_source(root, excluded=(), allow_empty=False):
         if Path(directory) == root:
             dirs[:] = [name for name in dirs if name not in excluded]
         for name in dirs:
-            if (Path(directory) / name).is_symlink():
-                raise VaultError("Symlink directories are unsupported. Originals were not changed.")
+            candidate = Path(directory) / name
+            if is_linked(candidate):
+                raise VaultError("Linked directories are unsupported. Originals were not changed.")
+            check_supported_metadata(candidate)
         for name in sorted(names):
             path = Path(directory) / name
             info = path.lstat()
             if not stat.S_ISREG(info.st_mode):
                 raise VaultError("Only ordinary files are supported; symlinks are rejected.")
-            if has_resource_fork(path):
-                raise VaultError(
-                    "Files with macOS resource forks are unsupported. Originals were not changed."
-                )
+            check_supported_metadata(path)
             relative = safe_name(path.relative_to(root).as_posix())
             total += info.st_size
             if info.st_size > MAX_FILE or total > MAX_TOTAL or len(files) >= MAX_FILES:
@@ -143,7 +189,7 @@ def source_directories(root, excluded=()):
             dirs[:] = [name for name in dirs if name not in excluded]
         for name in dirs:
             path = Path(directory) / name
-            if path.is_symlink():
+            if is_linked(path):
                 raise VaultError("Symlink directories are unsupported.")
             directories.append(safe_name(path.relative_to(root).as_posix()))
             if len(directories) > MAX_FILES:
@@ -185,7 +231,7 @@ def create_vault(
                 # Recheck ancestors; this is a local prototype, not a hostile-filesystem sandbox.
                 if path.resolve().is_relative_to(root) is False or path.is_symlink():
                     raise VaultError("Source changed during import.")
-                descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                descriptor = open_regular_file(path)
                 with os.fdopen(descriptor, "rb") as stream:
                     before = os.fstat(stream.fileno())
                     if not stat.S_ISREG(before.st_mode):
@@ -212,7 +258,7 @@ def create_vault(
             archive.writestr("manifest.enc", encrypt(key, metadata, aad(vault_id, "manifest")))
         with open(temporary, "rb") as stream:
             os.fsync(stream.fileno())
-        os.link(temporary, destination)
+        publish_new_file(temporary, destination)
     finally:
         Path(temporary).unlink(missing_ok=True)
     return vault_id, key
@@ -350,7 +396,7 @@ def verify_source(source, session, progress=lambda message: None, *, excluded=()
     snapshots = []
     for number, (path, relative, size) in enumerate(files):
         progress(f"Verifying encrypted file {number + 1} of {len(files)}")
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = open_regular_file(path)
         with os.fdopen(descriptor, "rb") as stream:
             before = os.fstat(stream.fileno())
             contents = stream.read(MAX_FILE + 1)

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import queue
+import sys
 import time
 
 import cv2
@@ -71,6 +72,27 @@ def verify_models():
     for entry in entries:
         if hashlib.sha256((root / entry["name"]).read_bytes()).hexdigest() != entry["sha256"]:
             raise RuntimeError("Model verification failed. Run scripts/download_models.py again.")
+
+
+def open_camera(index, platform=None, factory=None):
+    platform = platform or sys.platform
+    factory = factory or cv2.VideoCapture
+    backends = (
+        [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+        if platform == "win32"
+        else [cv2.CAP_AVFOUNDATION]
+        if platform == "darwin"
+        else [cv2.CAP_ANY]
+    )
+    for backend in backends:
+        try:
+            capture = factory(index, backend)
+        except cv2.error:
+            continue
+        if capture.isOpened():
+            return capture
+        capture.release()
+    raise RuntimeError("Cannot open this camera. Check camera permission or select another camera.")
 
 
 class FaceEngine:
@@ -195,7 +217,7 @@ class CameraWorker(QThread):
                 motion = MotionEngine()
             if self.isInterruptionRequested():
                 return
-            capture = cv2.VideoCapture(self.camera, cv2.CAP_AVFOUNDATION)
+            capture = open_camera(self.camera)
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             if not capture.isOpened():
